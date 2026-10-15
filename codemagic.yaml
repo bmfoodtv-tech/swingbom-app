@@ -1,0 +1,93 @@
+# 스윙봄 — Codemagic 빌드 설정
+# ⓒ 찐골프(JJIN Golf) / 개발자 : 찬이작업실
+#
+# 목적: 맥 없이 클라우드에서 iOS 빌드를 만든다.
+#
+# ios-unsigned  서명 없는 .ipa 생성 → Windows 에서 Sideloadly 로 본인 아이폰에 설치
+#               (무료 Apple ID 사용, 7일마다 재설치 필요, 인앱결제는 동작하지 않음)
+#
+# 주의
+#   · ios/Podfile 이 저장소에 없다 (Windows 에서는 생성되지 않음).
+#     flutter build ios 가 첫 실행 때 자동으로 만들어 주므로 그대로 두면 된다.
+#   · ffmpeg_kit_flutter_new 가 포함되어 빌드 시간이 길다 (20~40분 예상).
+#   · 서명을 하지 않으므로 App Store·TestFlight 업로드에는 쓸 수 없다.
+
+workflows:
+
+  ios-unsigned:
+    name: iOS 테스트 빌드 (서명 없음)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+
+    environment:
+      flutter: 3.44.2
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Flutter 버전 확인
+        script: |
+          flutter --version
+          flutter doctor -v || true
+
+      - name: 의존성 설치
+        script: flutter pub get
+
+      - name: iOS 빌드 (서명 없음)
+        # Podfile 이 없으면 이 단계에서 Flutter 가 자동 생성한 뒤 pod install 까지 수행한다.
+        script: flutter build ios --release --no-codesign
+
+      - name: .ipa 로 포장
+        # 서명이 없으므로 xcodebuild -exportArchive 를 쓸 수 없다.
+        # Runner.app 을 Payload/ 에 넣고 zip 으로 묶는 것이 .ipa 의 실제 구조다.
+        script: |
+          set -e
+          cd build/ios/iphoneos
+          if [ ! -d "Runner.app" ]; then
+            echo "Runner.app 이 없습니다. 빌드 단계를 확인하세요."
+            ls -la
+            exit 1
+          fi
+          rm -rf Payload swingbom-unsigned.ipa
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -qr9 swingbom-unsigned.ipa Payload
+          echo "생성 완료:"
+          ls -lh swingbom-unsigned.ipa
+
+    artifacts:
+      - build/ios/iphoneos/swingbom-unsigned.ipa
+      - flutter_drive.log
+
+    publishing:
+      email:
+        recipients:
+          - bmfoodtv@gmail.com
+        notify:
+          success: true
+          failure: true
+
+
+  # ─────────────────────────────────────────────────────────────
+  # 참고용 — 안드로이드 APK 도 같은 저장소에서 뽑고 싶을 때 쓴다.
+  # 서명 없이 빌드하므로 설치는 되지만 플레이스토어 업로드에는 쓸 수 없다.
+  # (스토어 업로드용 AAB 는 서명키가 필요하므로 로컬에서 빌드한다)
+  android-apk:
+    name: Android 테스트 APK (서명 없음)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+
+    environment:
+      flutter: 3.44.2
+
+    scripts:
+      - name: 의존성 설치
+        script: flutter pub get
+
+      - name: APK 빌드 (arm64 전용)
+        # ffmpeg 때문에 전체 ABI 를 담으면 매우 커진다. 최신 기기용 arm64 만 뽑는다.
+        script: |
+          flutter build apk --release --split-per-abi --target-platform android-arm64
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
